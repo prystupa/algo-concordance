@@ -1,10 +1,6 @@
 
 object ConcordanceSolverRegex {
 
-  case class Concordance(word: String, sentences: List[Int])
-
-  case class Word(word: String, sentence: Int)
-
   def sentences(text: String): List[String] = {
     val r = """$|\n|\.+($|\n|\s+(?=[A-Z]))""".r
     r.split(text).toList.map(_.trim).filterNot(_.isEmpty)
@@ -18,6 +14,7 @@ object ConcordanceSolverRegex {
 
 class ConcordanceSolverRegex {
 
+  import Concordance._
   import ConcordanceSolverRegex._
 
   def solve(text: String): List[Concordance] = {
