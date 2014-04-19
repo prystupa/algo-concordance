@@ -1,4 +1,4 @@
-object Main extends App {
+object MainCmdLine extends App {
 
   def getMultiLine(result: String): String = {
     val s = readLine()

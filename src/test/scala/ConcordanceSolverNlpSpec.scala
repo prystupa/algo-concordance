@@ -3,7 +3,8 @@ import org.scalatest.{Matchers, path}
 
 class ConcordanceSolverNlpSpec extends path.FunSpec with Matchers {
 
-  import ConcordanceSolverNlp._
+  val solver = new ConcordanceSolverNlp
+  import solver._
 
   describe("Sentences splitter helper") {
     it("treats a single word as a sentence") {
