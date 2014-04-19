@@ -160,8 +160,8 @@ class ConcordanceIndexerJob(storage: ActorRef) extends Actor with ActorLogging {
     case batchText: BatchText =>
       log.debug("parsing batch #{} into sentences", batchText.batchNumber)
 
-      val sentenceSplitter = addJob(Props(classOf[SentenceBoundaryJob]))
-      val tokenizer = addJob(Props(classOf[TokenizerJob], Some(storage))) // results of tokenizer go to storage
+      val sentenceSplitter = addJob(Props(classOf[SentenceBoundaryJob]), "sentenceSplitter-" + batchText.batchNumber)
+      val tokenizer = addJob(Props(classOf[TokenizerJob], Some(storage)), "tokenizer-" + batchText.batchNumber) // results of tokenizer go to storage
       sentenceSplitter.tell(batchText, tokenizer) // results of sentence splitter go to tokenizer
 
     case EndOfInput =>
@@ -171,8 +171,8 @@ class ConcordanceIndexerJob(storage: ActorRef) extends Actor with ActorLogging {
     case Terminated(_) => checkEndOfWork(decreaseJobs = true)
   }
 
-  private def addJob(job: Props): ActorRef = {
-    val actor = context.actorOf(job)
+  private def addJob(job: Props, name: String): ActorRef = {
+    val actor = context.actorOf(job, name)
     activeJobs = activeJobs + 1
     context watch actor
     actor
