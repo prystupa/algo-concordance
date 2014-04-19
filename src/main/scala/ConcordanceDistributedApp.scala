@@ -98,14 +98,14 @@ class TokenizerJob(next: Option[ActorRef]) extends Actor with ActorLogging {
     case BatchSentences(sentences: List[String], batchNumber: Int) =>
       log.debug("tokenizing batch #{} into words within sentences", batchNumber)
 
-      val concordance: Map[String, Set[Int]] = sentences.zipWithIndex flatMap {
+      val concordance: Map[String, List[Int]] = sentences.zipWithIndex flatMap {
         case (sentence, index) => solver.words(sentence).map((_, index))
       } groupBy {
         case (word, _) => word
       } mapValues {
         case group => group.map {
           case (_, index) => index
-        }.toSet
+        }
       }
 
       next.getOrElse(sender()) ! BatchConcordance(concordance, totalSentences = sentences.length, batchNumber = batchNumber)
@@ -128,7 +128,7 @@ object ConcordanceIndexerJob {
 
   case class BatchSentences(sentences: List[String], batchNumber: Int)
 
-  case class BatchConcordance(concordance: Map[String, Set[Int]], totalSentences: Int, batchNumber: Int)
+  case class BatchConcordance(concordance: Map[String, List[Int]], totalSentences: Int, batchNumber: Int)
 
   case object EndOfInput
 
@@ -203,7 +203,7 @@ class ConcordanceStorage extends Actor with ActorLogging {
   import ConcordanceIndexerJob._
   import scala.collection.mutable
 
-  private val storage = new mutable.HashMap[String, mutable.Set[Int]] with mutable.MultiMap[String, Int]
+  private val storage = new mutable.HashMap[String, mutable.ListBuffer[Int]] withDefault(_ => mutable.ListBuffer())
   private var nextBatchNumber = 0
   private var nextSentenceNumber = 0
   private val smallestBatchNumberOrdering = Ordering.Int.reverse
@@ -219,7 +219,7 @@ class ConcordanceStorage extends Actor with ActorLogging {
       while (queue.headOption.exists(_.batchNumber == nextBatchNumber)) {
         val orderedResult = queue.dequeue()
         orderedResult.concordance.foreach {
-          case (word, sentences) => sentences.foreach(number => storage.addBinding(word, number + nextSentenceNumber))
+          case (word, sentences) => sentences.foreach(number => storage(word) += (number + nextSentenceNumber))
         }
         nextBatchNumber = nextBatchNumber + 1
         nextSentenceNumber = nextSentenceNumber + orderedResult.totalSentences

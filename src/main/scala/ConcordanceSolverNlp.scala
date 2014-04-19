@@ -67,11 +67,13 @@ object ConcordanceSolverNlp {
 
     TokenizerME.train(sampleStream, new TokenizerFactory("en", new Dictionary(), false, null), TrainingParameters.defaultParams())
   }
+
+  private case class Word(word: String, sentence: Int)
+
 }
 
 class ConcordanceSolverNlp {
 
-  import Concordance._
   import ConcordanceSolverNlp._
 
   private lazy val detector = new SentenceDetectorME(sentenceModel)
