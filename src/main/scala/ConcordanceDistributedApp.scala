@@ -1,5 +1,4 @@
 import akka.actor._
-import akka.actor.Terminated
 
 /** Application entry point for simulated distributed concordance computation for large volume of text
   *
