@@ -143,8 +143,7 @@ object ConcordanceIndexerJob {
   * On receiving a batch of raw text this indexer spins up two other distributed jobs to process it: sentence splitter
   * and word tokenizer. It then wires the pipeline such that output of sentence splitter is going to tokenizer, and
   * tokenizer's output is sent directly to storage for final reduction and persistence.
-  * Indexer also monitors all spun up jobs and terminates itself after processing is completed. It also gracefully
-  * terminate the storage job.
+  * Indexer also monitors all spun up jobs and terminates itself after processing is completed.
   *
   * @param storage this is the job to persist final batch processing results
   */
