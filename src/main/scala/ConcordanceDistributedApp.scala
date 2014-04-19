@@ -25,17 +25,17 @@ object ConcordanceDistributedApp extends App {
   * results of processing the text (accordance data). Application watches the indexer worker - when the worker
   * is done - application gracefully stops the storage worker and shuts down.
   * The number of batches can be controlled by `numberOfBatches` switch. The size of each batch can be set via
-  * `batchSize`, the default 500 sets each batch to have about 1,000 sentences in it.
+  * `batchSize`, the default 250 sets each batch to have about 500 sentences in it.
   */
 class ConcordanceDistributedApp extends Actor with ActorLogging {
 
   import ConcordanceIndexerJob._
 
   val numberOfBatches = 1000
-  val batchSize = 500
-  val storage = context.actorOf(Props(classOf[ConcordanceStorage]), "storage")
+  val batchSize = 250
+  val storage = context.actorOf(ConcordanceStorageInMemory.props(), "storage")
   context watch storage
-  val indexer = context.actorOf(Props(classOf[ConcordanceIndexerJob], storage), "indexer")
+  val indexer = context.actorOf(ConcordanceIndexerJob.props(storage), "indexer")
   context watch indexer
 
   batches(numberOfBatches, batchSize)
@@ -136,6 +136,7 @@ object ConcordanceIndexerJob {
 
   case object EndOfInput
 
+  def props(storage: ActorRef): Props = Props(classOf[ConcordanceIndexerJob], storage)
 }
 
 /** Main job coordinating other jobs in the distributed computation
@@ -190,6 +191,14 @@ class ConcordanceIndexerJob(storage: ActorRef) extends Actor with ActorLogging {
   }
 }
 
+
+object ConcordanceStorageInMemory {
+
+  case class Search(word: String)
+
+  def props(): Props = Props(classOf[ConcordanceStorageInMemory])
+}
+
 /** This is the worker to persist individual batch processing results
   *
   * This worker simulates storage by writing computed results to in-memory `storage` hash table. In real deployment
@@ -203,15 +212,15 @@ class ConcordanceIndexerJob(storage: ActorRef) extends Actor with ActorLogging {
   * The worker also supports a simple search operation - send it a Search request and it will reply with an
   * Option[Concordance] based on the data computed so far.
   */
-class ConcordanceStorage extends Actor with ActorLogging {
+class ConcordanceStorageInMemory extends Actor with ActorLogging {
 
+  import ConcordanceStorageInMemory._
   import ConcordanceIndexerJob._
   import scala.collection.mutable
 
-  case class Search(word: String)
-
   private val storage = new mutable.HashMap[String, mutable.ListBuffer[Int]] withDefault (_ => mutable.ListBuffer())
-  private var nextBatchNumber = 0 // next expected in-order batch number
+  private var nextBatchNumber = 0
+  // next expected in-order batch number
   private var nextSentenceNumber = 0
   private val smallestBatchNumberOnTop = Ordering.Int.reverse
   private val queue = mutable.PriorityQueue[BatchConcordance]()(new Ordering[BatchConcordance] {
@@ -227,8 +236,9 @@ class ConcordanceStorage extends Actor with ActorLogging {
       while (queue.headOption.exists(_.batchNumber == nextBatchNumber)) {
         val orderedResult = queue.dequeue()
         orderedResult.concordance.foreach {
-          case (word, sentences) => sentences.foreach(number => storage(word) += (number + nextSentenceNumber))
+          case (word, sentences) => storage(word) = storage(word) ++= sentences.map(_ + nextSentenceNumber)
         }
+
         nextBatchNumber = nextBatchNumber + 1
         nextSentenceNumber = nextSentenceNumber + orderedResult.totalSentences
       }
