@@ -22,8 +22,8 @@ object ConcordanceDistributedApp extends App {
   * Creates and monitors two top level workers - indexer and storage. Application reads large text batches from a
   * simulated location and submits them to indexer. Batches are numbered sequentially so it is possible to reconcile
   * their processing results when they are out of order. Indexer is configured with a `storage` worker to persist the
-  * results of processing the text (accordance data). Application watches the storage worker - when storage worker
-  * is done - application shuts down.
+  * results of processing the text (accordance data). Application watches the indexer worker - when the worker
+  * is done - application gracefully stops the storage worker and shuts down.
   * The number of batches can be controlled by `numberOfBatches` switch. The size of each batch can be set via
   * `batchSize`, the default 500 sets each batch to have about 1,000 sentences in it.
   */
@@ -33,9 +33,10 @@ class ConcordanceDistributedApp extends Actor with ActorLogging {
 
   val numberOfBatches = 1000
   val batchSize = 500
-  val storage = context.actorOf(Props(classOf[ConcordanceStorage]))
+  val storage = context.actorOf(Props(classOf[ConcordanceStorage]), "storage")
   context watch storage
-  val indexer = context.actorOf(Props(classOf[ConcordanceIndexerJob], storage))
+  val indexer = context.actorOf(Props(classOf[ConcordanceIndexerJob], storage), "indexer")
+  context watch indexer
 
   batches(numberOfBatches, batchSize)
     .zipWithIndex.map(zipped => BatchText(zipped._1, zipped._2))
@@ -43,8 +44,11 @@ class ConcordanceDistributedApp extends Actor with ActorLogging {
   indexer ! EndOfInput
 
   override def receive: Receive = {
+    case Terminated(`indexer`) =>
+      log.info("done indexing all batches, gracefully terminating storage...")
+      storage ! PoisonPill
     case Terminated(`storage`) =>
-      log.info("done storing all concordance data, terminating...")
+      log.info("done storing all concordance data, shutting down...")
       context.system.shutdown()
   }
 
@@ -181,37 +185,42 @@ class ConcordanceIndexerJob(storage: ActorRef) extends Actor with ActorLogging {
     }
 
     if (activeJobs == 0 && endOfInput) {
-      log.debug("shutting down indexer and storage")
+      log.debug("shutting down indexer...")
       context stop self
-      storage ! PoisonPill
     }
   }
 }
 
-/** This is the job to persist individual batch processing results
+/** This is the worker to persist individual batch processing results
   *
-  * This job simulates storage by writing computed results to in-memory `storage` hash table. In real deployment
-  * scenarios though this job would write to some persistent storage or distributed cache (e.g. MongoDB, Cassandra,
+  * This worker simulates storage by writing computed results to in-memory `storage` hash table. In real deployment
+  * scenarios though this worker would write to some persistent storage or distributed cache (e.g. MongoDB, Cassandra,
   * Redis, relational database) designed to meet specific application needs.
-  * This job also handles batch results that, in a distributed environment, can arrive out of order. If batch results
+  * This worker also handles batch results that, in a distributed environment, can arrive out of order. If batch results
   * arrive in order they are stored immediately, if not - they are queued until the order can be reconstructed.
   * The reason we need to process batch results in order is to reconstruct sentence numbers in the original full text.
-  * This implementation uses heap (priority queue) to reconstruct original order efficiently.
+  * This implementation uses [short lived] heap (priority queue) to reconstruct original order efficiently.
+  *
+  * The worker also supports a simple search operation - send it a Search request and it will reply with an
+  * Option[Concordance] based on the data computed so far.
   */
 class ConcordanceStorage extends Actor with ActorLogging {
 
   import ConcordanceIndexerJob._
   import scala.collection.mutable
 
-  private val storage = new mutable.HashMap[String, mutable.ListBuffer[Int]] withDefault(_ => mutable.ListBuffer())
-  private var nextBatchNumber = 0
+  case class Search(word: String)
+
+  private val storage = new mutable.HashMap[String, mutable.ListBuffer[Int]] withDefault (_ => mutable.ListBuffer())
+  private var nextBatchNumber = 0 // next expected in-order batch number
   private var nextSentenceNumber = 0
-  private val smallestBatchNumberOrdering = Ordering.Int.reverse
+  private val smallestBatchNumberOnTop = Ordering.Int.reverse
   private val queue = mutable.PriorityQueue[BatchConcordance]()(new Ordering[BatchConcordance] {
-    override def compare(x: BatchConcordance, y: BatchConcordance): Int = smallestBatchNumberOrdering.compare(x.batchNumber, y.batchNumber)
+    override def compare(x: BatchConcordance, y: BatchConcordance): Int = smallestBatchNumberOnTop.compare(x.batchNumber, y.batchNumber)
   })
 
   override def receive: Receive = {
+
     case result: BatchConcordance =>
       log.debug("storing concordance for batch #{}", result.batchNumber)
       queue.enqueue(result)
@@ -224,5 +233,8 @@ class ConcordanceStorage extends Actor with ActorLogging {
         nextBatchNumber = nextBatchNumber + 1
         nextSentenceNumber = nextSentenceNumber + orderedResult.totalSentences
       }
+
+    case search: Search =>
+      sender ! storage.get(search.word).map(lb => Concordance(search.word, lb.toList))
   }
 }
